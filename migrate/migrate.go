@@ -12,18 +12,31 @@ type Storage interface {
 	DB() *sql.DB
 	Dialect() string
 	MigrationsPath() string
-	GetFS() fs.FS
 }
 
-func MustMigrate(store Storage) {
-	if err := Migrate(store); err != nil {
+type migrator struct{}
+
+func NewMigrator(
+	logger goose.Logger,
+	migrations fs.FS,
+) *migrator {
+
+	if logger != nil {
+		goose.SetLogger(logger)
+	}
+
+	goose.SetBaseFS(migrations)
+
+	return &migrator{}
+}
+
+func (m *migrator) MustMigrate(store Storage) {
+	if err := m.Migrate(store); err != nil {
 		panic(err)
 	}
 }
 
-func Migrate(store Storage) error {
-
-	goose.SetBaseFS(store.GetFS())
+func (m *migrator) Migrate(store Storage) error {
 
 	dialect := store.Dialect()
 
