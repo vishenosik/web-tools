@@ -10,11 +10,12 @@ import (
 )
 
 const (
-	AttrError     = "err"
-	AttrOperation = "operation"
-	AttrTook      = "took"
-	AttrUserID    = "user_id" // Assuming User struct has field "ID"
-	AttrAppID     = "app_id"  // Assuming App struct has field "
+	AttrError        = "err"
+	AttrOperation    = "operation"
+	AttrTook         = "took"
+	AttrUserID       = "user_id" // Assuming User struct has field "ID"
+	AttrAppID        = "app_id"  // Assuming App struct has field
+	AttrAppComponent = "app_component"
 )
 
 func Error(err error) slog.Attr {
@@ -35,4 +36,8 @@ func UserID(userID string) slog.Attr {
 
 func AppID(appID string) slog.Attr {
 	return slog.String(AttrAppID, appID)
+}
+
+func AppComponent(component string) slog.Attr {
+	return slog.String(AttrAppComponent, component)
 }

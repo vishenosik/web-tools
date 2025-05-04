@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/fatih/color"
@@ -25,12 +26,17 @@ type Handler struct {
 	buf     *bytes.Buffer
 	mutex   *sync.Mutex
 
-	outputEmptyAttrs bool
 	// syntax highlighter
 	highlight *colors.Higlighter
 
 	// marshaller type
 	marshalType uint8
+
+	attrs customAttrs
+}
+
+type customAttrs struct {
+	component string
 }
 
 // The signature of the function for setting parameters
@@ -49,17 +55,19 @@ func NewHandler(
 	buf := &bytes.Buffer{}
 
 	h := &Handler{
-		handler: slog.NewJSONHandler(buf, &slog.HandlerOptions{
-			Level:       handlerOptions.Level,
-			AddSource:   handlerOptions.AddSource,
-			ReplaceAttr: suppressDefaultAttrs(handlerOptions.ReplaceAttr),
-		}),
 		buf:       buf,
 		writer:    writer,
 		highlight: colors.NewHighlighter(),
 		rec:       handlerOptions.ReplaceAttr,
 		mutex:     &sync.Mutex{},
 	}
+
+	h.handler = slog.NewJSONHandler(buf, &slog.HandlerOptions{
+		Level:       handlerOptions.Level,
+		AddSource:   handlerOptions.AddSource,
+		ReplaceAttr: suppressDefaultAttrs(handlerOptions.ReplaceAttr),
+	})
+
 	for _, opt := range opts {
 		opt(h)
 	}
@@ -68,6 +76,16 @@ func NewHandler(
 }
 
 func (h *Handler) Handle(ctx context.Context, rec slog.Record) error {
+
+	var builder strings.Builder
+
+	builder.WriteString(fmt.Sprintf("[%s] ", rec.Time.Format(timeFormat)))
+
+	if h.attrs.component != "" {
+		builder.WriteString(fmt.Sprintf("[%s] ", color.GreenString(h.attrs.component)))
+	}
+
+	builder.WriteString(fmt.Sprintf("%s: %s\n", level(rec), color.CyanString(rec.Message)))
 
 	attrs, err := h.computeAttrs(ctx, rec)
 	if err != nil {
@@ -79,25 +97,14 @@ func (h *Handler) Handle(ctx context.Context, rec slog.Record) error {
 		return err
 	}
 
-	output := fmt.Sprintf(
-		"[%s] %s: %s\n",
-		rec.Time.Format(timeFormat),
-		level(rec),
-		color.CyanString(rec.Message),
-	)
-
 	attrsStr = h.highlight.HighlightNumbers(attrsStr)
 	attrsStr = h.highlight.HighlightKeyWords(attrsStr)
 
 	if attrsStr != "" {
-		output = fmt.Sprintf(
-			"%s%s\n",
-			output,
-			attrsStr,
-		)
+		builder.WriteString(fmt.Sprintf("%s\n", attrsStr))
 	}
 
-	_, err = io.WriteString(h.writer, output)
+	_, err = io.WriteString(h.writer, builder.String())
 	if err != nil {
 		return err
 	}
@@ -110,26 +117,35 @@ func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &Handler{
-		handler:     h.handler.WithAttrs(attrs),
-		writer:      h.writer,
-		highlight:   h.highlight,
-		buf:         h.buf,
-		rec:         h.rec,
-		mutex:       h.mutex,
-		marshalType: h.marshalType,
+	out := copy(h)
+	out.handler = h.handler.WithAttrs(attrs)
+
+	for _, attr := range attrs {
+		switch attr.Key {
+		case AttrAppComponent:
+			out.attrs.component = attr.Value.String()
+		}
 	}
+
+	return out
 }
 
 func (h *Handler) WithGroup(name string) slog.Handler {
+	out := copy(h)
+	out.handler = h.handler.WithGroup(name)
+	return out
+}
+
+func copy(h *Handler) *Handler {
 	return &Handler{
-		handler:     h.handler.WithGroup(name),
+		handler:     h.handler,
 		writer:      h.writer,
 		highlight:   h.highlight,
 		buf:         h.buf,
 		rec:         h.rec,
 		mutex:       h.mutex,
 		marshalType: h.marshalType,
+		attrs:       h.attrs,
 	}
 }
 
@@ -187,12 +203,10 @@ func WithJsonMarshaller() optsFunc {
 	}
 }
 
-func suppressDefaultAttrs(
-	next nextFunc,
-) nextFunc {
+func suppressDefaultAttrs(next nextFunc) nextFunc {
 	return func(groups []string, a slog.Attr) slog.Attr {
 		switch a.Key {
-		case slog.TimeKey, slog.LevelKey, slog.MessageKey:
+		case slog.TimeKey, slog.LevelKey, slog.MessageKey, AttrAppComponent:
 			return slog.Attr{}
 		}
 		if next == nil {
