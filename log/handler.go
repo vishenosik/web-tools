@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 
@@ -18,6 +19,10 @@ import (
 const (
 	timeFormat = "15:04:05.000"
 )
+
+type customAttrs struct {
+	component string
+}
 
 type Handler struct {
 	handler slog.Handler
@@ -35,43 +40,34 @@ type Handler struct {
 	attrs customAttrs
 }
 
-type customAttrs struct {
-	component string
-}
-
 // The signature of the function for setting parameters
-type optsFunc func(*Handler)
+type HandlerOption func(*Handler)
 
-func NewHandler(
-	writer io.Writer,
-	level slog.Level,
-	opts ...optsFunc,
-) *Handler {
-
-	handlerOptions := &slog.HandlerOptions{
-		Level: level,
-	}
-
+func defaultHandler() *Handler {
+	handlerOptions := &slog.HandlerOptions{Level: slog.LevelDebug}
 	buf := &bytes.Buffer{}
 
 	h := &Handler{
+		handler: slog.NewJSONHandler(buf, &slog.HandlerOptions{
+			Level:       handlerOptions.Level,
+			AddSource:   handlerOptions.AddSource,
+			ReplaceAttr: suppressDefaultAttrs(handlerOptions.ReplaceAttr),
+		}),
 		buf:       buf,
-		writer:    writer,
+		writer:    os.Stdout,
 		highlight: colors.NewHighlighter(),
 		rec:       handlerOptions.ReplaceAttr,
 		mutex:     &sync.Mutex{},
 	}
 
-	h.handler = slog.NewJSONHandler(buf, &slog.HandlerOptions{
-		Level:       handlerOptions.Level,
-		AddSource:   handlerOptions.AddSource,
-		ReplaceAttr: suppressDefaultAttrs(handlerOptions.ReplaceAttr),
-	})
+	return h
+}
 
+func NewHandler(opts ...HandlerOption) *Handler {
+	h := defaultHandler()
 	for _, opt := range opts {
 		opt(h)
 	}
-
 	return h
 }
 
@@ -136,6 +132,110 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 	return out
 }
 
+func WithWriter(writer io.Writer) HandlerOption {
+	return func(h *Handler) {
+		if writer != nil {
+			h.writer = writer
+		}
+	}
+}
+
+func WithLevel(level slog.Level) HandlerOption {
+	return func(h *Handler) {
+		handlerOptions := &slog.HandlerOptions{
+			Level: level,
+		}
+		h.handler = slog.NewJSONHandler(h.buf, &slog.HandlerOptions{
+			Level:       handlerOptions.Level,
+			AddSource:   handlerOptions.AddSource,
+			ReplaceAttr: suppressDefaultAttrs(handlerOptions.ReplaceAttr),
+		})
+	}
+}
+
+func WithNumbersHighlight(color colors.ColorCode) HandlerOption {
+	return func(h *Handler) {
+		h.highlight = colors.Modify(h.highlight, colors.WithNumbersHighlight(color))
+	}
+}
+
+func WithKeyWordsHighlight(keywordsToColors map[string]colors.ColorCode) HandlerOption {
+	return func(h *Handler) {
+		h.highlight = colors.Modify(h.highlight, colors.WithKeyWordsHighlight(keywordsToColors))
+	}
+}
+
+func WithYamlMarshaller() HandlerOption {
+	return func(h *Handler) {
+		h.marshalType = yaml_marshaller
+	}
+}
+
+const (
+	json_marshaller uint8 = iota
+	yaml_marshaller
+)
+
+type nextFunc func([]string, slog.Attr) slog.Attr
+
+type attrs = map[string]any
+
+func suppressDefaultAttrs(next nextFunc) nextFunc {
+	return func(groups []string, a slog.Attr) slog.Attr {
+		switch a.Key {
+		case slog.TimeKey, slog.LevelKey, slog.MessageKey, AttrAppComponent:
+			return slog.Attr{}
+		}
+		if next == nil {
+			return a
+		}
+		return next(groups, a)
+	}
+}
+
+func (h *Handler) computeAttrs(ctx context.Context, rec slog.Record) (attrs, error) {
+
+	h.mutex.Lock()
+	defer func() {
+		h.buf.Reset()
+		h.mutex.Unlock()
+	}()
+
+	if err := h.handler.Handle(ctx, rec); err != nil {
+		return nil, fmt.Errorf("error when calling inner handler's Handle: %w", err)
+	}
+
+	var attrs attrs
+	err := json.Unmarshal(h.buf.Bytes(), &attrs)
+	if err != nil {
+		return nil, fmt.Errorf("error when unmarshaling inner handler's Handle result: %w", err)
+	}
+
+	return attrs, nil
+}
+
+func (h *Handler) marshal(attrs attrs) (string, error) {
+	var (
+		data []byte
+		err  error
+	)
+	if len(attrs) > 0 {
+
+		switch h.marshalType {
+		case json_marshaller:
+			data, err = json.MarshalIndent(attrs, "", "  ")
+
+		case yaml_marshaller:
+			data, err = yaml.Marshal(attrs)
+		}
+
+		if err != nil {
+			return "", err
+		}
+	}
+	return string(data), nil
+}
+
 func copy(h *Handler) *Handler {
 	return &Handler{
 		handler:     h.handler,
@@ -168,96 +268,4 @@ func level(rec slog.Record) string {
 
 	}
 	return level
-}
-
-func WithNumbersHighlight(color colors.ColorCode) optsFunc {
-	return func(h *Handler) {
-		h.highlight = colors.Modify(h.highlight, colors.WithNumbersHighlight(color))
-	}
-}
-
-func WithKeyWordsHighlight(keywordsToColors map[string]colors.ColorCode) optsFunc {
-	return func(h *Handler) {
-		h.highlight = colors.Modify(h.highlight, colors.WithKeyWordsHighlight(keywordsToColors))
-	}
-}
-
-const (
-	json_marshaller uint8 = iota
-	yaml_marshaller
-)
-
-type nextFunc func([]string, slog.Attr) slog.Attr
-
-type attrsMap map[string]any
-
-func WithYamlMarshaller() optsFunc {
-	return func(h *Handler) {
-		h.marshalType = yaml_marshaller
-	}
-}
-
-func WithJsonMarshaller() optsFunc {
-	return func(h *Handler) {
-		h.marshalType = json_marshaller
-	}
-}
-
-func suppressDefaultAttrs(next nextFunc) nextFunc {
-	return func(groups []string, a slog.Attr) slog.Attr {
-		switch a.Key {
-		case slog.TimeKey, slog.LevelKey, slog.MessageKey, AttrAppComponent:
-			return slog.Attr{}
-		}
-		if next == nil {
-			return a
-		}
-		return next(groups, a)
-	}
-}
-
-func (h *Handler) computeAttrs(
-	ctx context.Context,
-	rec slog.Record,
-) (attrsMap, error) {
-
-	h.mutex.Lock()
-	defer func() {
-		h.buf.Reset()
-		h.mutex.Unlock()
-	}()
-
-	if err := h.handler.Handle(ctx, rec); err != nil {
-		return nil, fmt.Errorf("error when calling inner handler's Handle: %w", err)
-	}
-
-	var attrs attrsMap
-	err := json.Unmarshal(h.buf.Bytes(), &attrs)
-	if err != nil {
-		return nil, fmt.Errorf("error when unmarshaling inner handler's Handle result: %w", err)
-	}
-
-	return attrs, nil
-}
-
-func (h *Handler) marshal(attrs attrsMap) (string, error) {
-	var (
-		data []byte
-		err  error
-	)
-	if len(attrs) > 0 {
-
-		switch h.marshalType {
-		case json_marshaller:
-			data, err = json.MarshalIndent(attrs, "", "  ")
-
-		case yaml_marshaller:
-			data, err = yaml.Marshal(attrs)
-		}
-
-		if err != nil {
-			return "", err
-		}
-	}
-	return string(data), nil
 }

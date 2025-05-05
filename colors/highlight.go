@@ -1,48 +1,69 @@
+// The colors package provides text highlighting functionality through the Higlighter struct,
+// which can highlight numbers and keywords in strings using configurable color codes.
+// The package uses regular expressions for pattern matching and supports a functional options pattern
+// for flexible configuration.
 package colors
 
 import (
 	// builtin
 	"regexp"
-
-	// internal
-	"github.com/vishenosik/web-tools/regex"
+	"strings"
 )
 
+var (
+	// NumberRegex matches standalone numbers (both integers and floats) while ignoring:
+	// 	- Numbers embedded in words (e.g., "abc123")
+	// 	- Numbers in UUIDs (e.g., "d72be13c-9a0a-4df9-8475-d0f4b0701248")
+	// Pattern breakdown:
+	//   (^|\s)    - Start of string or whitespace
+	//   (\d+      - One or more digits
+	//   (?:\.\d+)? - Optional decimal part
+	//   )         - End of number capture
+	//   (\s|$|[^\w-]) - Followed by whitespace, end of string, or non-word character (except hyphen)
+	NumberRegex = regexp.MustCompile(`(^|\s)(\d+(?:\.\d+)?)(\s|$|[^\w-])`)
+)
+
+// Higlighter provides text highlighting capabilities for numbers and keywords.
 type Higlighter struct {
-	numbers          *regexp.Regexp
-	doNumbers        bool
-	numbersColor     ColorCode
-	keywords         *regexp.Regexp
+	// Compiled regex for number matching
+	numbers *regexp.Regexp
+	// Flag to enable/disable number highlighting
+	doNumbers bool
+	// Color code for number highlighting
+	numbersColor ColorCode
+	// Compiled regex for keyword matching
+	keywords *regexp.Regexp
+	// Map of keywords to their corresponding color codes
 	keywordsToColors map[string]ColorCode
 }
 
 // optsFunc is a function type used for configuring a Higlighter instance.
-//
-// It takes a pointer to a Higlighter as its parameter and returns nothing.
-// This type is typically used in a functional options pattern to provide
-// a flexible way of configuring Higlighter objects.
+// It follows the functional options pattern to provide flexible configuration.
 //
 // Parameters:
-//   - h: A pointer to the Higlighter instance to be configured.
+//
+//	h - Pointer to the Higlighter instance to be configured
 type optsFunc func(*Higlighter)
 
-// NewHighlighter creates and returns a new Higlighter instance.
-//
-// It initializes a Higlighter with default settings and applies any provided
-// option functions to customize the highlighter.
+// NewHighlighter creates and returns a new Higlighter instance with optional configurations.
 //
 // Parameters:
-//   - opts: A variadic parameter of option functions (optsFunc) that can be used
-//     to configure the Higlighter. Each function in opts will be called with the
-//     Higlighter instance, allowing for custom configuration.
+//
+//	opts - Variadic list of option functions to configure the highlighter
 //
 // Returns:
-//   - *Higlighter: A pointer to the newly created and configured Higlighter instance.
-func NewHighlighter(
-	opts ...optsFunc,
-) *Higlighter {
+//
+//	*Higlighter - Newly created and configured Higlighter instance
+//
+// Example:
+//
+//	h := NewHighlighter(
+//	    WithNumbersHighlight(ColorRed),
+//	    WithKeyWordsHighlight(map[string]ColorCode{"error": ColorRed}),
+//	)
+func NewHighlighter(opts ...optsFunc) *Higlighter {
 	h := &Higlighter{
-		numbers: regex.NumberRegex,
+		numbers: NumberRegex,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -54,15 +75,14 @@ func NewHighlighter(
 // It applies the provided option functions to configure the Higlighter.
 //
 // Parameters:
-//   - h: A pointer to the Higlighter to be modified. If nil, a new Higlighter is created.
-//   - opts: A variadic parameter of option functions (optsFunc) used to configure the Higlighter.
+//
+//	h    - Pointer to the Higlighter to modify (nil creates a new instance)
+//	opts - Variadic list of option functions to apply
 //
 // Returns:
-//   - *Higlighter: A pointer to the modified or newly created Higlighter instance.
-func Modify(
-	h *Higlighter,
-	opts ...optsFunc,
-) *Higlighter {
+//
+//	*Higlighter - Modified or newly created Higlighter instance
+func Modify(h *Higlighter, opts ...optsFunc) *Higlighter {
 	if h == nil {
 		h = NewHighlighter(opts...)
 	}
@@ -75,13 +95,17 @@ func Modify(
 // HighlightNumbers applies color highlighting to numbers in the input string if enabled.
 //
 // Parameters:
-//   - src: The input string to be processed.
+//
+//	src - Input string to process
 //
 // Returns:
-//   - string: The processed string with numbers highlighted if enabled, otherwise the original string.
+//
+//	string - Processed string with numbers highlighted if enabled, otherwise original string
 func (h *Higlighter) HighlightNumbers(src string) string {
 	if h.doNumbers {
-		return h.numbers.ReplaceAllStringFunc(src, func(s string) string { return colors[h.numbersColor](s) })
+		return h.numbers.ReplaceAllStringFunc(src, func(s string) string {
+			return colors[h.numbersColor](s)
+		})
 	}
 	return src
 }
@@ -89,10 +113,12 @@ func (h *Higlighter) HighlightNumbers(src string) string {
 // HighlightKeyWords applies color highlighting to specified keywords in the input string.
 //
 // Parameters:
-//   - src: The input string to be processed.
+//
+//	src - Input string to process
 //
 // Returns:
-//   - string: The processed string with keywords highlighted if any are defined, otherwise the original string.
+//
+//	string - Processed string with keywords highlighted if any are defined, otherwise original string
 func (h *Higlighter) HighlightKeyWords(src string) string {
 	if len(h.keywordsToColors) == 0 {
 		return src
@@ -102,13 +128,11 @@ func (h *Higlighter) HighlightKeyWords(src string) string {
 	})
 }
 
-// WithNumbersHighlight returns an option function that enables number highlighting with the specified color.
+// WithNumbersHighlight returns an option function that enables number highlighting.
 //
 // Parameters:
-//   - color: The ColorCode to be used for highlighting numbers.
 //
-// Returns:
-//   - optsFunc: A function that configures a Higlighter to highlight numbers with the specified color.
+//	color - ColorCode to use for highlighting numbers
 func WithNumbersHighlight(color ColorCode) optsFunc {
 	return func(h *Higlighter) {
 		h.doNumbers = true
@@ -116,20 +140,35 @@ func WithNumbersHighlight(color ColorCode) optsFunc {
 	}
 }
 
-// WithKeyWordsHighlight returns an option function that enables keyword highlighting with specified colors.
+// WithKeyWordsHighlight returns an option function that enables keyword highlighting.
 //
 // Parameters:
-//   - keywordsToColors: A map where keys are keywords to highlight and values are their corresponding ColorCodes.
 //
-// Returns:
-//   - optsFunc: A function that configures a Higlighter to highlight keywords with their specified colors.
+//	keywordsToColors - Map of keywords to their ColorCodes
 func WithKeyWordsHighlight(keywordsToColors map[string]ColorCode) optsFunc {
 	return func(h *Higlighter) {
 		keywords := make([]string, 0, len(keywordsToColors))
 		for key := range keywordsToColors {
 			keywords = append(keywords, key)
 		}
-		h.keywords = regex.KeyWordsCompile(keywords...)
+		h.keywords = compileKeyWordsRegex(keywords...)
 		h.keywordsToColors = keywordsToColors
 	}
+}
+
+// compileKeyWordsRegex compiles a regular expression for matching keywords.
+// Each keyword is wrapped with word boundaries to ensure whole-word matching.
+//
+// Parameters:
+//
+//	keywords - Variadic list of keywords to match
+//
+// Returns:
+//
+//	*regexp.Regexp - Compiled regular expression for keyword matching
+func compileKeyWordsRegex(keywords ...string) *regexp.Regexp {
+	for i := range keywords {
+		keywords[i] = `\b` + regexp.QuoteMeta(keywords[i]) + `\b`
+	}
+	return regexp.MustCompile(strings.Join(keywords, "|"))
 }
