@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/pkg/profile"
+	"github.com/stretchr/testify/require"
 
 	"github.com/brianvoe/gofakeit/v6"
 )
@@ -91,16 +92,16 @@ func randomStringSlice(n int) []string {
 }
 
 func BenchmarkUnique(b *testing.B) {
-	defer profile.Start(
-		profile.MemProfile,
-		profile.ProfilePath("./mem.out"),
-		profile.MemProfileRate(1),
-		profile.NoShutdownHook,
-	).Stop()
+	// Start memory profiling
+	pp := profile.Start(
+		profile.MemProfile, profile.ProfilePath("./pprof.out"),
+		profile.MemProfileRate(1), profile.NoShutdownHook,
+	)
+	defer pp.Stop()
+
 	sizes := []int{
-		100000,
-		// 10000000,
-		// 100000000,
+		100_000,
+		1_000_000,
 	}
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("unique_int_size_%d", size), func(b *testing.B) {
@@ -110,58 +111,50 @@ func BenchmarkUnique(b *testing.B) {
 				Unique(slice)
 			}
 		})
-		// b.Run(fmt.Sprintf("unique_string_size_%d", size), func(b *testing.B) {
-		// 	slice := randomStringSlice(size)
-		// 	b.ResetTimer()
-		// 	for i := 0; i < b.N; i++ {
-		// 		Unique(slice)
-		// 	}
-		// })
+		b.Run(fmt.Sprintf("unique_string_size_%d", size), func(b *testing.B) {
+			slice := randomStringSlice(size)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				Unique(slice)
+			}
+		})
 	}
 }
 
-// func TestUnique(t *testing.T) {
+func TestUnique(t *testing.T) {
 
-// 	defer profile.Start(
-// 		profile.MemProfile,
-// 		profile.ProfilePath("./mem.out"),
-// 		profile.MemProfileRate(1),
-// 		profile.NoShutdownHook,
-// 	).Stop()
+	// Start memory profiling
+	pp := profile.Start(
+		profile.MemProfile, profile.ProfilePath("./pprof.out"),
+		profile.MemProfileRate(1), profile.NoShutdownHook,
+	)
+	defer pp.Stop()
 
-// 	slice := randomIntSlice(1000000)
-// 	// Run the Unique function
-// 	result := Unique(slice)
+	slice := randomIntSlice(1000000)
+	result := Unique(slice)
 
-// 	// Use the result to prevent compiler optimization
-// 	if len(result) == 0 {
-// 		t.Fatal("Unexpected empty result")
-// 	}
+	require.NotEqual(t, 0, len(result))
+}
 
-// }
+func TestUniqueIntMemProfile(t *testing.T) {
+	// Skip this test unless explicitly run with -test.run=TestUniqueIntMemProfile
+	if testing.Short() {
+		t.Skip("Skipping memory profile test in short mode")
+	}
 
-// func TestUniqueIntMemProfile(t *testing.T) {
-// 	// Skip this test unless explicitly run with -test.run=TestUniqueIntMemProfile
-// 	if testing.Short() {
-// 		t.Skip("Skipping memory profile test in short mode")
-// 	}
+	// Start memory profiling
+	pp := profile.Start(
+		profile.MemProfile, profile.ProfilePath("./pprof.out"),
+		profile.MemProfileRate(1), profile.NoShutdownHook,
+	)
+	defer pp.Stop()
 
-// 	// Start memory profiling
-// 	defer profile.Start(
-// 		profile.MemProfile,
-// 		profile.ProfilePath("."),  // Save in current directory
-// 		profile.MemProfileRate(1), // Record all allocations
-// 		profile.NoShutdownHook,
-// 	).Stop()
+	slice := randomIntSlice(1_000_000)
 
-// 	// Create a large slice of integers
-// 	slice := randomIntSlice(10000000) // 10 million integers
+	result := Unique(slice)
 
-// 	// Run the Unique function
-// 	result := Unique(slice)
-
-// 	// Use the result to prevent compiler optimization
-// 	if len(result) == 0 {
-// 		t.Fatal("Unexpected empty result")
-// 	}
-// }
+	// Use the result to prevent compiler optimization
+	if len(result) == 0 {
+		t.Fatal("Unexpected empty result")
+	}
+}
