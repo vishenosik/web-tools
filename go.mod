@@ -1,4 +1,4 @@
-module github.com/vishenosik/web-tools
+module github.com/vishenosik/web
 
 go 1.23.7
 

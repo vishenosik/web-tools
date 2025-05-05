@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/vishenosik/web-tools/api"
-	attrs "github.com/vishenosik/web-tools/log"
+	"github.com/vishenosik/web/api"
+	attrs "github.com/vishenosik/web/log"
 )
 
 type loggingResponseWriter struct {

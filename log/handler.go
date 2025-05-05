@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	"github.com/fatih/color"
-	"github.com/vishenosik/web-tools/colors"
+	"github.com/vishenosik/web/colors"
 	"gopkg.in/yaml.v2"
 )
 
