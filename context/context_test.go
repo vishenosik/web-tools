@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,4 +32,15 @@ func Test_Context(t *testing.T) {
 	require.NotNil(t, actual)
 
 	require.Equal(t, testID, actual.testID)
+}
+
+func Test_RequestContext(t *testing.T) {
+
+	requestID := "requestID"
+
+	ctx := WithRequestCtx(context.Background(), requestID)
+
+	actualGC, ok := RequestFromCtx(ctx)
+	assert.True(t, ok)
+	assert.Equal(t, requestID, actualGC.requestID)
 }

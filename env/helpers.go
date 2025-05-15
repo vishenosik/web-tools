@@ -29,7 +29,13 @@ func newIndent(writer StringerWriter, indent int) *indentWrapper {
 
 func (i *indentWrapper) Write(p []byte) (n int, err error) {
 	indenter := []byte{whiteSpace}
-	return i.writer.Write(append(bytes.Repeat(indenter, i.indent), p...))
+	cp := make([]byte, len(p))
+	copy(cp, p)
+
+	if bytes.Contains(cp, []byte("\n")) {
+		return i.writer.Write(cp)
+	}
+	return i.writer.Write(append(cp, bytes.Repeat(indenter, i.indent)...))
 }
 
 func (i *indentWrapper) Bytes() []byte {
@@ -50,7 +56,7 @@ func genEnvConfig[Type any](cfg Type) []byte {
 
 	builder := new(strings.Builder)
 
-	writer := newIndent(builder, 0)
+	writer := newIndent(builder, 2)
 	genEnvConfigRecursively(writer, _type)
 
 	return writer.Bytes()
@@ -118,6 +124,5 @@ func ConfigDoc[Type any]() func(string) error {
 		}
 
 		return ConfigInfo[Type](file)(filename)
-
 	}
 }
