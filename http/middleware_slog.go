@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/vishenosik/web/api"
-	attrs "github.com/vishenosik/web/log"
+	"github.com/vishenosik/web/logs"
 )
 
 type loggingResponseWriter struct {
@@ -26,7 +26,7 @@ func RequestLogger(logger *slog.Logger) func(next http.Handler) http.Handler {
 			log := logger.With(
 				slog.String("method", fmt.Sprintf("%s %s", r.Method, r.URL.Path)),
 				slog.Int("code", lrw.statusCode),
-				attrs.Took(timeStart),
+				logs.Took(timeStart),
 			)
 
 			switch {

@@ -9,7 +9,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/vishenosik/web/config"
-	logger "github.com/vishenosik/web/log"
+	"github.com/vishenosik/web/logs"
 )
 
 type Server struct {
@@ -65,7 +65,7 @@ func (a *Server) MustRun() {
 func (a *Server) Run() error {
 	const op = "http.Server.Run"
 
-	log := a.log.With(logger.Operation(op), slog.Any("port", a.port))
+	log := a.log.With(logs.Operation(op), slog.Any("port", a.port))
 
 	log.Info("starting server")
 
@@ -83,9 +83,9 @@ func (a *Server) Stop(ctx context.Context) {
 
 	const op = "http.Server.Stop"
 
-	a.log.Info("stopping server", logger.Operation(op), slog.Any("port", a.port))
+	a.log.Info("stopping server", logs.Operation(op), slog.Any("port", a.port))
 
 	if err := a.server.Shutdown(ctx); err != nil {
-		a.log.Error("server shutdown failed", logger.Error(err))
+		a.log.Error("server shutdown failed", logs.Error(err))
 	}
 }
