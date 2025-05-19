@@ -3,14 +3,9 @@ package http
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/pkg/errors"
-	"github.com/vishenosik/web/api"
-	attrs "github.com/vishenosik/web/log"
-	"github.com/vishenosik/web/models"
 	"github.com/vishenosik/web/versions"
 )
 
@@ -29,49 +24,52 @@ type VersionHandler interface {
 	WithContext(ctx context.Context) context.Context
 }
 
+type Middleware = func(http.Handler) http.Handler
+
+type Handler = func(handlers HandlersMap) http.HandlerFunc
+
 // apiVersionKey is an unexported type for context keys to prevent collisions
 type apiVersionKey struct{}
 
 // APIVersion represents a parsed semantic version
 type APIVersion struct {
-	Version models.Version
+	Version versions.Interface
 	param   string
 	header  string
-	minimal models.Version
-	current models.Version
+	minimal versions.Interface
+	current versions.Interface
 }
 
 type ApiVersionOption = func(*APIVersion)
 
-func defaultApiVersion() *APIVersion {
+func defaultApiVersion(version versions.Interface) *APIVersion {
 	return &APIVersion{
-		param:  VersionParam,
-		header: VersionHeader,
+		Version: version,
+		minimal: version,
+		current: version,
+		param:   VersionParam,
+		header:  VersionHeader,
 	}
 }
 
-func newApiVersion(version models.Version, current string, opts ...ApiVersionOption) (*APIVersion, error) {
-	av := defaultApiVersion()
-	av.Version = version
-	av.minimal = version
-	currentVer, err := version.Parse_(current)
-	if err != nil {
-		return nil, err
+func newApiVersion(version versions.Interface, opts ...ApiVersionOption) (*APIVersion, error) {
+	if version == nil {
+		return nil, errors.New("version interface is nil")
 	}
-
-	av.current = currentVer
+	av := defaultApiVersion(version)
 	for _, opt := range opts {
 		opt(av)
 	}
 	return av, nil
 }
 
-func mustInitApiVersion(version models.Version, current string, opts ...ApiVersionOption) *APIVersion {
-	av, err := newApiVersion(version, current, opts...)
-	if err != nil {
-		panic(err)
+func Min(version string) ApiVersionOption {
+	return func(av *APIVersion) {
+		min, err := av.Version.Parse_(version)
+		if err == nil {
+			av.minimal = min
+		}
 	}
-	return av
 }
 
 // ParseFirst parses the version from request (query param or header)
@@ -105,7 +103,7 @@ func (av *APIVersion) WithContext(ctx context.Context) context.Context {
 }
 
 // ApiVersionFromContext retrieves the APIVersion from context
-func ApiVersionFromContext[VersionType models.Version](ctx context.Context) (VersionType, error) {
+func TypedApiVersionFromContext[VersionType versions.Interface](ctx context.Context) (VersionType, error) {
 	var empty VersionType
 	val := ctx.Value(apiVersionKey{})
 	if val == nil {
@@ -119,14 +117,38 @@ func ApiVersionFromContext[VersionType models.Version](ctx context.Context) (Ver
 	return version, nil
 }
 
+// ApiVersionFromContext retrieves the APIVersion from context
+func ApiVersionFromContext(ctx context.Context) (versions.Interface, error) {
+	val := ctx.Value(apiVersionKey{})
+	if val == nil {
+		return nil, errors.New("no API version in context")
+	}
+
+	version, ok := val.(versions.Interface)
+	if !ok {
+		return nil, errors.New("invalid API version type in context")
+	}
+	return version, nil
+}
+
+func ApiVersionMiddlewareHandler(version versions.Interface, opts ...ApiVersionOption) (Middleware, Handler) {
+	return ApiVersionMiddleware(version, opts...), ApiVersionHandler
+}
+
+func DotVersionMiddlewareHandler(version string, opts ...ApiVersionOption) (Middleware, Handler) {
+	return ApiVersionMiddlewareHandler(versions.NewDotVersion(version), opts...)
+}
+
 // ApiVersionMiddleware validates the API version from request
 func ApiVersionMiddleware(
-	version models.Version,
-	current string,
+	version versions.Interface,
 	opts ...ApiVersionOption,
-) func(http.Handler) http.Handler {
+) Middleware {
 
-	av := mustInitApiVersion(version, current, opts...)
+	av, err := newApiVersion(version, opts...)
+	if err != nil {
+		panic(err)
+	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,11 +162,13 @@ func ApiVersionMiddleware(
 	}
 }
 
-type VersionedHandlersMap = map[string]http.HandlerFunc
+type HandlersMap = map[string]http.HandlerFunc
 
-func VersionedHandler(handlers VersionedHandlersMap) http.HandlerFunc {
+type HandlersSet = func(HandlersMap) http.HandlerFunc
+
+func DotVersionHandler(handlers HandlersMap) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		apiVersion, err := ApiVersionFromContext[versions.DoubleVersion](r.Context())
+		apiVersion, err := TypedApiVersionFromContext[versions.DotVersion](r.Context())
 		if err != nil {
 			SendErrors(w, http.StatusBadRequest, err.Error())
 			return
@@ -160,51 +184,20 @@ func VersionedHandler(handlers VersionedHandlersMap) http.HandlerFunc {
 	}
 }
 
-type loggingResponseWriter struct {
-	http.ResponseWriter
-	statusCode int
-}
+func ApiVersionHandler(handlers HandlersMap) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		apiVersion, err := ApiVersionFromContext(r.Context())
+		if err != nil {
+			SendErrors(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
-func RequestLogger(logger *slog.Logger) func(next http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			lrw := newLoggingResponseWriter(w)
-			timeStart := time.Now()
+		handler, ok := handlers[apiVersion.String()]
+		if !ok || handler == nil {
+			SendErrors(w, http.StatusNotImplemented, "api version unsupported")
+			return
+		}
 
-			next.ServeHTTP(lrw, r)
-
-			log := logger.With(
-				slog.String("method", fmt.Sprintf("%s %s", r.Method, r.URL.Path)),
-				slog.Int("code", lrw.statusCode),
-				attrs.Took(timeStart),
-			)
-
-			switch {
-			case api.IsClientError(lrw.statusCode) || api.IsServerError(lrw.statusCode):
-				log.Error("request failed with error")
-			case api.IsRedirect(lrw.statusCode):
-				log.Warn("request redirected")
-			default:
-				log.Info("request accepted")
-			}
-		})
-	}
-}
-
-func newLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
-	return &loggingResponseWriter{w, http.StatusOK}
-}
-
-func (lrw *loggingResponseWriter) WriteHeader(statusCode int) {
-	lrw.statusCode = statusCode
-	lrw.ResponseWriter.WriteHeader(statusCode)
-}
-
-func SetHeaders() func(next http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			next.ServeHTTP(w, r)
-		})
+		handler(w, r)
 	}
 }

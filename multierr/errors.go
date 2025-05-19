@@ -14,12 +14,15 @@ func (er *Error) ErrorOrNil() error {
 	if er.errs == nil || len(er.errs.Errors) == 0 {
 		return nil
 	}
-
 	return er
 }
 
 func (er *Error) Error() string {
 	return er.errs.Error()
+}
+
+func (er *Error) Unwrap() error {
+	return er.errs.Unwrap()
 }
 
 func (er *Error) Critical() error {
